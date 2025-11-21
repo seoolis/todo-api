@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import time
+from pydantic import BaseModel
 
 app = FastAPI(
     title="TODO API",
@@ -28,7 +29,41 @@ async def add_process_time_header(request: Request, call_next):
 def add_numbers(a: int, b: int):
     return {"result": a + b}
 
+class TaskCreate(BaseModel):
+    title: str
+    description: str
 
-@app.get("/tasks")
+class Task(TaskCreate):
+    id: int
+    done: bool = False
+
+tasks: list[Task] = []
+next_id = 1
+
+@app.get("/tasks", response_model=list[Task])
 async def get_tasks():
-    return ["foo", "bar"]
+    return tasks
+
+@app.get("/tasks/{task_id}", response_model=Task)
+async def get_task(task_id: int):
+    for t in tasks:
+        if t.id == task_id:
+            return t
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+# @app.get("/tasks")
+# async def get_tasks(a: int):
+#     return tasks
+
+
+@app.post("/tasks", response_model=Task, status_code=201)
+async def create_task(task: TaskCreate):
+    global next_id
+    new_task = Task(
+        id=next_id,
+        title=task.title,
+        description=task.description
+    )
+    next_id += 1
+    return new_task

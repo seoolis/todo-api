@@ -6,10 +6,23 @@ from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from sqlalchemy import Column, Integer, String, Boolean, create_engine
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+engine = create_engine(
+    "sqlite:///./tasks.db"
+)
+
 class TaskModel(Base):
-    __tablename__ == "tasks"
+    __tablename__ = "tasks"
 
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    description = Column(String)
+    done = Column(Boolean, default=False)
 
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="TODO API",

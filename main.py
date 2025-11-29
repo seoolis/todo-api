@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Integer, String, Boolean, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -18,16 +18,16 @@ engine = create_async_engine(
 DBSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=AsyncSession)
 
 
-class TaskModel(Base):
-    __tablename__ = "tasks"
+class TaskModel(SQLModel, table=True):
+    __tablename__ = 'tasks'
 
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String)
-    description = Column(String)
-    done = Column(Boolean, default=False)
+    id: int | None = Field(primary_key=True)
+    title: str
+    description: str
+    done: bool = False
 
 
-#Base.metadata.create_all(bind=engine)
+# Base.metadata.create_all(bind=engine)
 
 
 async def get_db():
@@ -35,13 +35,22 @@ async def get_db():
     try:
         yield db
     finally:
-        db.close()
+        await db.close()
 
 
 app = FastAPI(
     title="TODO API",
     version="1.0"
 )
+
+
+@app.on_event("startup")
+async def on_startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            SQLModel.metadata.create_all
+        )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,11 +94,10 @@ tasks: list[Task] = []
 next_id = 1
 
 
-@app.get("/tasks", response_model=list[Task])
+@app.get("/tasks", response_model=list[TaskModel])
 async def get_tasks(
         db: DBSession = Depends(get_db)
 ):
-    #return db.query(TaskModel).all()
     stmt = select(TaskModel)
     result = await db.execute(stmt)
     return result.scalars()
@@ -114,8 +122,8 @@ async def create_task(
     )
 
     db.add(new_task)
-    db.commit()
-
+    await db.commit()
+    await db.refresh(new_task)
     return new_task
 
 
@@ -135,12 +143,14 @@ async def update_task(task_id: int, updated: TaskUpdate):
 
 
 @app.delete("/tasks/{task_id}", status_code=204)
-async def delete_task(task_id: int):
-    for t in tasks:
-        if t.id == task_id:
-            tasks.remove(t)
-            return
-    raise HTTPException(status_code=404, detail="Task not found")
+async def delete_task(
+        task_id: int,
+        db: DBSession = Depends(get_db)):
+    obj = await db.get(TaskModel, task_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Task not found")
+    await db.delete(obj)
+    await db.commit()
 
 
 @app.get("/async_task")

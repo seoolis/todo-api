@@ -2,7 +2,7 @@ import asyncio
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -10,6 +10,7 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Integer, String, Boolean, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
+from starlette.websockets import WebSocketDisconnect
 
 Base = declarative_base()
 engine = create_async_engine(
@@ -103,12 +104,12 @@ async def get_tasks(
     return result.scalars()
 
 
-@app.get("/tasks/{task_id}", response_model=Task)
-async def get_task(task_id: int):
-    for t in tasks:
-        if t.id == task_id:
-            return t
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.get("/tasks/{task_id}", response_model=TaskModel)
+async def get_task(task_id: int, db: DBSession = Depends(get_db)):
+    task = await db.get(TaskModel, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 
 @app.post("/tasks", response_model=Task, status_code=201)
@@ -127,19 +128,23 @@ async def create_task(
     return new_task
 
 
-@app.put("/tasks/{task_id}", response_model=Task)
-async def update_task(task_id: int, updated: TaskUpdate):
-    for idx, t in enumerate(tasks):
-        print(idx, t.id, task_id)
-        if t.id == task_id:
-            tasks[idx] = Task(
-                id=t.id,
-                title=updated.title,
-                description=updated.description,
-                done=updated.done,
-            )
-            return tasks[idx]
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.put("/tasks/{task_id}", response_model=TaskModel)
+async def update_task(
+        task_id: int,
+        updated: TaskUpdate,
+        db: DBSession = Depends(get_db)
+):
+    task = await db.get(TaskModel, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    for key, value in updated.model_dump().items():
+        setattr(task, key, value)
+
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return task
 
 
 @app.delete("/tasks/{task_id}", status_code=204)
@@ -203,3 +208,47 @@ async def cpu_task(n: int = 10_000_000_000):
     return {
         "message": result
     }
+
+# тут будет парсер
+
+# а тут вебсокет
+
+class ConnectionManadger:
+    def __init__(self):
+        self.active_connection: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connection.append(websocket)
+
+    async def handle(self, data, websocket):
+        if data == "spec":
+            await websocket.send_text("SPEC OK!")
+        elif data == "close":
+            await self.disconnect(websocket)
+        else:
+            await websocket.send_text(data * 10)
+
+    async def disconnect(self, websocket: WebSocket):
+        await websocket.close()
+        self.active_connection.remove(websocket)
+
+manager = ConnectionManadger()
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+
+    async def tick():
+        while True:
+            await websocket.send_text('FOO!')
+            await asyncio.sleep(10)
+    asyncio.create_task(tick())
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.handle(data, websocket)
+
+    except WebSocketDisconnect:
+        await manager.disconnect(websocket)

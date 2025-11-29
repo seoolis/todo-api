@@ -211,6 +211,28 @@ async def cpu_task(n: int = 10_000_000_000):
 
 # тут будет парсер
 
+from playwright.async_api import async_playwright
+
+
+class CitilinkParser:
+
+    async def start(self):
+        playwright = await async_playwright().start()
+        self.browser = await playwright.chromium.launch(headless=False)
+        context = await self.browser.new_context()
+        self.page = await context.new_page()
+
+@app.get("/parser")
+async def parser(background_task: BackgroundTasks):
+    def func(x):
+        return x
+    category_url = "https://www.citilink.ru/catalog/smartfony"
+    background_task.add_task(func, category_url)
+    return {
+        "message": "Парсер запущен в фоне"
+    }
+
+
 # а тут вебсокет
 
 class ConnectionManadger:

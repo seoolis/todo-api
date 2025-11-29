@@ -6,3 +6,4 @@ ruff
 sqlalchemy
 aiosqlite
 sqlmodel
+playwright

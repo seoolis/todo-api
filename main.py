@@ -2,17 +2,21 @@ import asyncio
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
-from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from sqlalchemy import Column, Integer, String, Boolean, create_engine
-from sqlalchemy.orm import declarative_base
+from sqlmodel import SQLModel
+from sqlalchemy import Column, Integer, String, Boolean, select
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
-engine = create_engine(
-    "sqlite:///./tasks.db"
+engine = create_async_engine(
+    "sqlite+aiosqlite:///./tasks.db"
 )
+DBSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=AsyncSession)
+
 
 class TaskModel(Base):
     __tablename__ = "tasks"
@@ -22,7 +26,17 @@ class TaskModel(Base):
     description = Column(String)
     done = Column(Boolean, default=False)
 
-Base.metadata.create_all(bind=engine)
+
+#Base.metadata.create_all(bind=engine)
+
+
+async def get_db():
+    db = DBSession()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 app = FastAPI(
     title="TODO API",
@@ -72,8 +86,13 @@ next_id = 1
 
 
 @app.get("/tasks", response_model=list[Task])
-async def get_tasks():
-    return tasks
+async def get_tasks(
+        db: DBSession = Depends(get_db)
+):
+    #return db.query(TaskModel).all()
+    stmt = select(TaskModel)
+    result = await db.execute(stmt)
+    return result.scalars()
 
 
 @app.get("/tasks/{task_id}", response_model=Task)
@@ -85,15 +104,18 @@ async def get_task(task_id: int):
 
 
 @app.post("/tasks", response_model=Task, status_code=201)
-async def create_task(task: TaskCreate):
-    global next_id
-    new_task = Task(
-        id=next_id,
+async def create_task(
+        task: TaskCreate,
+        db: DBSession = Depends(get_db)
+):
+    new_task = TaskModel(
         title=task.title,
-        description=task.description
+        description=task.description,
     )
-    tasks.append(new_task)
-    next_id += 1
+
+    db.add(new_task)
+    db.commit()
+
     return new_task
 
 
@@ -120,6 +142,7 @@ async def delete_task(task_id: int):
             return
     raise HTTPException(status_code=404, detail="Task not found")
 
+
 @app.get("/async_task")
 async def async_task():
     await asyncio.sleep(60)
@@ -141,11 +164,13 @@ async def background_task(background_task: BackgroundTasks):
 excutor = ThreadPoolExecutor(max_workers=2)
 executor = ProcessPoolExecutor(max_workers=2)
 
+
 def blocking_io_task():
     import time
 
     time.sleep(60)
     return "ok"
+
 
 @app.get("/thread_pool_sleep")
 async def thread_pool_sleep():
@@ -153,11 +178,13 @@ async def thread_pool_sleep():
     result = await loop.run_in_executor(excutor, blocking_io_task)
     return {"message": result}
 
+
 def heavy_func(n: int):
     result = 0
     for i in range(n):
         result += i * i
     return result
+
 
 @app.get("/cpu_task")
 async def cpu_task(n: int = 10_000_000_000):

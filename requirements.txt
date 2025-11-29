@@ -4,3 +4,5 @@ httpx
 black
 ruff
 sqlalchemy
+aiosqlite
+sqlmodel

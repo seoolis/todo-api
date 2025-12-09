@@ -60,3 +60,7 @@ venv.bak/
 
 # venv
 .venv/
+
+#DB
+
+tasks.db

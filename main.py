@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
@@ -11,6 +12,11 @@ from sqlalchemy import Column, Integer, String, Boolean, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from starlette.websockets import WebSocketDisconnect
+
+from nats.aio.client import Client as NATS
+
+nats_client = NATS()
+
 
 Base = declarative_base()
 engine = create_async_engine(
@@ -82,33 +88,41 @@ async def on_startup():
     #./nats sub test
     # uvicorn main:app
 
+    #./nats sub "tasks.*"
+
     import nats
     async with engine.begin() as conn:
         await conn.run_sync(
             SQLModel.metadata.create_all
         )
 
-    nc = await nats.connect("nats://127.0.0.1:4222")
-    import json
-    data = {
-        "foo": 1,
-        "name": "test"
-    }
-    await nc.publish("test", b"abc123")
-    await nc.publish("test", json.dumps(data).encode())
+    await nats_client.connect("nats://127.0.0.1:4222")
 
-    async def message_handler(msg):
+    import json
+
+    #data = {
+    #    "foo": 1,
+    #    "name": "test"
+    #}
+
+    #await nc.publish("test", b"abc123")
+    #await nc.publish("test", json.dumps(data).encode())
+
+    async def handle_nats_message(msg):
         data = msg.data.decode()
-        print(f"NATS msg: {data}")
+        print(f"NATS < {msg.subject}: {data}")
 
         # при каждой отправке данных брокер дублирует их всем клиентам, подключенным по websocket
 
         # ./nats pub test "HELLO WORLD!"
         await manager.broadcast(data)
 
-    await nc.subscribe("test", cb=message_handler)
+    #await nc.subscribe("test", cb=message_handler)
 
-    await nc.publish("test", b"Hello!")
+    #await nc.publish("test", b"Hello!")
+
+    await nats_client.subscribe("tasks.*", cb=handle_nats_message)
+    print("NATS connected, subs ready.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -169,50 +183,66 @@ async def get_task(task_id: int, db: DBSession = Depends(get_db)):
     return task
 
 
-@app.post("/tasks", response_model=Task, status_code=201)
-async def create_task(
-        task: TaskCreate,
-        db: DBSession = Depends(get_db)
-):
+@app.post("/tasks", response_model=TaskModel, status_code=201)
+async def create_task(task: TaskCreate, db: DBSession = Depends(get_db)):
     new_task = TaskModel(
         title=task.title,
         description=task.description,
+        done=False
     )
 
     db.add(new_task)
     await db.commit()
     await db.refresh(new_task)
+
+    # Публикуем событие
+    await nats_client.publish(
+        "tasks.created",
+        new_task.model_dump_json().encode()
+    )
+
     return new_task
 
 
+
 @app.put("/tasks/{task_id}", response_model=TaskModel)
-async def update_task(
-        task_id: int,
-        updated: TaskUpdate,
-        db: DBSession = Depends(get_db)
-):
+async def update_task(task_id: int, updated: TaskUpdate, db: DBSession = Depends(get_db)):
     task = await db.get(TaskModel, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    for key, value in updated.model_dump().items():
-        setattr(task, key, value)
+    for k, v in updated.model_dump().items():
+        setattr(task, k, v)
 
     db.add(task)
     await db.commit()
     await db.refresh(task)
+
+    # Событие обновления
+    await nats_client.publish(
+        "tasks.updated",
+        task.model_dump_json().encode()
+    )
+
     return task
 
 
+
 @app.delete("/tasks/{task_id}", status_code=204)
-async def delete_task(
-        task_id: int,
-        db: DBSession = Depends(get_db)):
-    obj = await db.get(TaskModel, task_id)
-    if not obj:
+async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
+    task = await db.get(TaskModel, task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    await db.delete(obj)
+
+    await db.delete(task)
     await db.commit()
+
+    # Публикуем событие удаления
+    await nats_client.publish(
+        "tasks.deleted",
+        json.dumps({"id": task_id}).encode()
+    )
+
 
 
 # тест асинхронных запросов

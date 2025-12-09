@@ -19,6 +19,35 @@ engine = create_async_engine(
 DBSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=AsyncSession)
 
 
+# вебсокет
+
+class ConnectionManadger:
+    def __init__(self):
+        self.active_connection: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connection.append(websocket)
+
+    async def handle(self, data, websocket):
+        if data == "spec":
+            await websocket.send_text("SPEC OK!")
+        elif data == "close":
+            await self.disconnect(websocket)
+        else:
+            await websocket.send_text(data * 10)
+
+    async def disconnect(self, websocket: WebSocket):
+        await websocket.close()
+        self.active_connection.remove(websocket)
+
+    async def broadcast(self, data: str):
+        for ws in self.active_connection:
+            await ws.send_text(data)
+
+
+manager = ConnectionManadger()
+
 class TaskModel(SQLModel, table=True):
     __tablename__ = 'tasks'
 
@@ -47,11 +76,39 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def on_startup():
+    # nats
+
+    #./nats-server
+    #./nats sub test
+    # uvicorn main:app
+
+    import nats
     async with engine.begin() as conn:
         await conn.run_sync(
             SQLModel.metadata.create_all
         )
 
+    nc = await nats.connect("nats://127.0.0.1:4222")
+    import json
+    data = {
+        "foo": 1,
+        "name": "test"
+    }
+    await nc.publish("test", b"abc123")
+    await nc.publish("test", json.dumps(data).encode())
+
+    async def message_handler(msg):
+        data = msg.data.decode()
+        print(f"NATS msg: {data}")
+
+        # при каждой отправке данных брокер дублирует их всем клиентам, подключенным по websocket
+
+        # ./nats pub test "HELLO WORLD!"
+        await manager.broadcast(data)
+
+    await nc.subscribe("test", cb=message_handler)
+
+    await nc.publish("test", b"Hello!")
 
 app.add_middleware(
     CORSMiddleware,
@@ -297,30 +354,7 @@ async def parser(background_task: BackgroundTasks):
     }
 
 
-# вебсокет
 
-class ConnectionManadger:
-    def __init__(self):
-        self.active_connection: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connection.append(websocket)
-
-    async def handle(self, data, websocket):
-        if data == "spec":
-            await websocket.send_text("SPEC OK!")
-        elif data == "close":
-            await self.disconnect(websocket)
-        else:
-            await websocket.send_text(data * 10)
-
-    async def disconnect(self, websocket: WebSocket):
-        await websocket.close()
-        self.active_connection.remove(websocket)
-
-
-manager = ConnectionManadger()
 
 
 @app.websocket("/ws")

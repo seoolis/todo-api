@@ -158,59 +158,60 @@ async def delete_task(
     await db.commit()
 
 
-@app.get("/async_task")
-async def async_task():
-    await asyncio.sleep(60)
-    return {"message": "ok"}
+# тест асинхронных запросов
 
+# @app.get("/async_task")
+# async def async_task():
+#     await asyncio.sleep(60)
+#     return {"message": "ok"}
+#
+#
+# @app.get("/background_task")
+# async def background_task(background_task: BackgroundTasks):
+#     def slow_time():
+#         import time
+#
+#         time.sleep(10)
+#         print("OK!")
+#
+#     background_task.add_task(slow_time)
+#     return {"message": "task started"}
+#
+#
+# excutor = ThreadPoolExecutor(max_workers=2)
+# executor = ProcessPoolExecutor(max_workers=2)
+#
+#
+# def blocking_io_task():
+#     import time
+#
+#     time.sleep(60)
+#     return "ok"
+#
+#
+# @app.get("/thread_pool_sleep")
+# async def thread_pool_sleep():
+#     loop = asyncio.get_running_loop()
+#     result = await loop.run_in_executor(excutor, blocking_io_task)
+#     return {"message": result}
+#
+#
+# def heavy_func(n: int):
+#     result = 0
+#     for i in range(n):
+#         result += i * i
+#     return result
+#
+#
+# @app.get("/cpu_task")
+# async def cpu_task(n: int = 10_000_000_000):
+#     loop = asyncio.get_running_loop()
+#     result = await loop.run_in_executor(excutor, heavy_func, n)
+#     return {
+#         "message": result
+#     }
 
-@app.get("/background_task")
-async def background_task(background_task: BackgroundTasks):
-    def slow_time():
-        import time
-
-        time.sleep(10)
-        print("OK!")
-
-    background_task.add_task(slow_time)
-    return {"message": "task started"}
-
-
-excutor = ThreadPoolExecutor(max_workers=2)
-executor = ProcessPoolExecutor(max_workers=2)
-
-
-def blocking_io_task():
-    import time
-
-    time.sleep(60)
-    return "ok"
-
-
-@app.get("/thread_pool_sleep")
-async def thread_pool_sleep():
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(excutor, blocking_io_task)
-    return {"message": result}
-
-
-def heavy_func(n: int):
-    result = 0
-    for i in range(n):
-        result += i * i
-    return result
-
-
-@app.get("/cpu_task")
-async def cpu_task(n: int = 10_000_000_000):
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(excutor, heavy_func, n)
-    return {
-        "message": result
-    }
-
-
-# тут будет парсер
+# парсер
 
 from playwright.async_api import async_playwright
 
@@ -230,7 +231,7 @@ class CitilinkParser:
         context = await self.browser.new_context()
         self.page = await context.new_page()
 
-#SnippetProductHorizontalLayout
+    # SnippetProductHorizontalLayout - для другого режима отображения
 
     async def load_page(self, url):
         await self.page.goto(url)
@@ -286,7 +287,7 @@ async def parser(background_task: BackgroundTasks):
 
     async def paginator(url, max_pages):
         for page in range(max_pages):
-            new_url = url + f"?p={page+1}"
+            new_url = url + f"?p={page + 1}"
             await func(new_url)
 
     category_url = "https://www.citilink.ru/catalog/smartfony"
@@ -296,7 +297,7 @@ async def parser(background_task: BackgroundTasks):
     }
 
 
-# а тут вебсокет
+# вебсокет
 
 class ConnectionManadger:
     def __init__(self):

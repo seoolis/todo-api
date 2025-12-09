@@ -209,9 +209,11 @@ async def cpu_task(n: int = 10_000_000_000):
         "message": result
     }
 
+
 # тут будет парсер
 
 from playwright.async_api import async_playwright
+
 
 class Product(BaseModel):
     name: str
@@ -220,7 +222,6 @@ class Product(BaseModel):
 
 
 class CitilinkParser:
-
     BASE_URL = 'https://www.citilink.ru'
 
     async def start(self):
@@ -229,20 +230,26 @@ class CitilinkParser:
         context = await self.browser.new_context()
         self.page = await context.new_page()
 
+#SnippetProductHorizontalLayout
+
     async def load_page(self, url):
         await self.page.goto(url)
-        await self.page.wait_for_selector('[data-meta-name="SnippetProductHorizontalLayout"]',
-                                          timeout=15_000)
+        await self.page.wait_for_selector(
+            '[data-meta-name="SnippetProductVerticalLayout"]',
+            timeout=15_000
+        )
 
     async def parce_products(self) -> list[Product]:
         products = []
         cards = await self.page.query_selector_all(
-            '[data-meta-name="SnippetProductHorizontalLayout"]',
+            '[data-meta-name="SnippetProductVerticalLayout"]',
         )
         print(f"Найдено товаров: {len(cards)}")
 
         for card in cards:
-            name_el = await card.query_selector('[data-meta-name="Snippet__title"]')
+            name_el = await card.query_selector(
+                '[data-meta-name="Snippet__title"]'
+            )
             name = await name_el.inner_text()
 
             link_el = await card.query_selector('a[href*="/product/"]')
@@ -250,7 +257,22 @@ class CitilinkParser:
 
             link = self.BASE_URL + href
 
-            print(f"{name} - {link}")
+            price_el = await card.query_selector(
+                "[data-meta-price]"
+            )
+
+            price = await price_el.get_attribute("data-meta-price")
+
+            products.append(
+                Product(
+                    name=name,
+                    link=link,
+                    price=price
+                )
+            )
+
+        return products
+
 
 @app.get("/parser")
 async def parser(background_task: BackgroundTasks):
@@ -259,9 +281,16 @@ async def parser(background_task: BackgroundTasks):
     async def func(x):
         await citi_parser.start()
         await citi_parser.load_page(x)
-        await citi_parser.parce_products()
+        products = await citi_parser.parce_products()
+        print(products)
+
+    async def paginator(url, max_pages):
+        for page in range(max_pages):
+            new_url = url + f"?p={page+1}"
+            await func(new_url)
+
     category_url = "https://www.citilink.ru/catalog/smartfony"
-    background_task.add_task(func, category_url)
+    background_task.add_task(paginator, category_url, max_pages=5)
     return {
         "message": "Парсер запущен в фоне"
     }
@@ -289,7 +318,9 @@ class ConnectionManadger:
         await websocket.close()
         self.active_connection.remove(websocket)
 
+
 manager = ConnectionManadger()
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -299,6 +330,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             await websocket.send_text('FOO!')
             await asyncio.sleep(10)
+
     asyncio.create_task(tick())
 
     try:

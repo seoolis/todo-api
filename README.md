@@ -55,6 +55,10 @@
 
 ### Запуск
 
+Установить последние релизы NATS по ссылкам: https://github.com/nats-io/nats-server/releases/ и https://github.com/nats-io/natscli/releases/
+
+Далее поместить файлы в папку с проектом (например, в текущем репозитории в директории проекта уже существует файл nats-server.exe для запуска сервера).
+
 uvicorn main:app
 
 1) ./nats-server - запуск сервера

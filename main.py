@@ -1,22 +1,21 @@
 import asyncio
 import json
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-
+from playwright.async_api import async_playwright
 from fastapi import FastAPI, Request, Response, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect
+from fastapi import Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter
 from pydantic import BaseModel
-
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Integer, String, Boolean, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from starlette.websockets import WebSocketDisconnect
-
 from nats.aio.client import Client as NATS
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 nats_client = NATS()
-
 
 Base = declarative_base()
 engine = create_async_engine(
@@ -54,6 +53,7 @@ class ConnectionManadger:
 
 manager = ConnectionManadger()
 
+
 class TaskModel(SQLModel, table=True):
     __tablename__ = 'tasks'
 
@@ -84,13 +84,6 @@ app = FastAPI(
 async def on_startup():
     # nats
 
-    #./nats-server
-    #./nats sub test
-    # uvicorn main:app
-
-    #./nats sub "tasks.*"
-
-    import nats
     async with engine.begin() as conn:
         await conn.run_sync(
             SQLModel.metadata.create_all
@@ -98,15 +91,13 @@ async def on_startup():
 
     await nats_client.connect("nats://127.0.0.1:4222")
 
-    import json
-
-    #data = {
+    # data = {
     #    "foo": 1,
     #    "name": "test"
-    #}
+    # }
 
-    #await nc.publish("test", b"abc123")
-    #await nc.publish("test", json.dumps(data).encode())
+    # await nc.publish("test", b"abc123")
+    # await nc.publish("test", json.dumps(data).encode())
 
     async def handle_nats_message(msg):
         data = msg.data.decode()
@@ -117,12 +108,13 @@ async def on_startup():
         # ./nats pub test "HELLO WORLD!"
         await manager.broadcast(data)
 
-    #await nc.subscribe("test", cb=message_handler)
+    # await nc.subscribe("test", cb=message_handler)
 
-    #await nc.publish("test", b"Hello!")
+    # await nc.publish("test", b"Hello!")
 
     await nats_client.subscribe("tasks.*", cb=handle_nats_message)
     print("NATS connected, subs ready.")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -204,7 +196,6 @@ async def create_task(task: TaskCreate, db: DBSession = Depends(get_db)):
     return new_task
 
 
-
 @app.put("/tasks/{task_id}", response_model=TaskModel)
 async def update_task(task_id: int, updated: TaskUpdate, db: DBSession = Depends(get_db)):
     task = await db.get(TaskModel, task_id)
@@ -227,7 +218,6 @@ async def update_task(task_id: int, updated: TaskUpdate, db: DBSession = Depends
     return task
 
 
-
 @app.delete("/tasks/{task_id}", status_code=204)
 async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
     task = await db.get(TaskModel, task_id)
@@ -244,6 +234,41 @@ async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
     )
 
 
+@app.patch("/tasks/{task_id}", response_model=TaskModel)
+async def patch_task(
+        task_id: int,
+        updated: dict = Body(...),
+        db: DBSession = Depends(get_db)
+):
+    task = await db.get(TaskModel, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # обновляем только переданные поля
+    for key, value in updated.items():
+        if hasattr(task, key):
+            setattr(task, key, value)
+
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+@app.post("/task-generator/run")
+async def run_task_generator(background_tasks: BackgroundTasks):
+    citi_parser = CitilinkParser()
+
+    async def func():
+        await citi_parser.start()
+        category_url = "https://www.citilink.ru/catalog/smartfony"
+        await citi_parser.load_page(category_url)
+        products = await citi_parser.parce_products()
+        print(products)
+
+    background_tasks.add_task(func)
+    return {"message": "Фоновая задача запущена"}
+
 
 # тест асинхронных запросов
 
@@ -256,7 +281,6 @@ async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
 # @app.get("/background_task")
 # async def background_task(background_task: BackgroundTasks):
 #     def slow_time():
-#         import time
 #
 #         time.sleep(10)
 #         print("OK!")
@@ -270,7 +294,6 @@ async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
 #
 #
 # def blocking_io_task():
-#     import time
 #
 #     time.sleep(60)
 #     return "ok"
@@ -299,8 +322,6 @@ async def delete_task(task_id: int, db: DBSession = Depends(get_db)):
 #     }
 
 # парсер
-
-from playwright.async_api import async_playwright
 
 
 class Product(BaseModel):
@@ -384,9 +405,6 @@ async def parser(background_task: BackgroundTasks):
     }
 
 
-
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -403,5 +421,16 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             await manager.handle(data, websocket)
 
+    except WebSocketDisconnect:
+        await manager.disconnect(websocket)
+
+@app.websocket("/ws/tasks")
+async def websocket_tasks_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.handle(data, websocket)
     except WebSocketDisconnect:
         await manager.disconnect(websocket)
